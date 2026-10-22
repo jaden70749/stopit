@@ -131,6 +131,7 @@ function App() {
   const routeRequest = useRef(null);
   const replayActive = useRef(false);
   const audioRef = useRef(null);
+  const alertSounds = useRef([]);
   const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
   const watchRef = useRef(null);
   const searchTimer = useRef(null);
@@ -270,16 +271,29 @@ function App() {
       try {
         const context = audioRef.current || new (window.AudioContext || window.webkitAudioContext)();
         audioRef.current = context;
-        [0, 0.22, 0.44].forEach((delay, index) => {
-          const oscillator = context.createOscillator();
-          const gain = context.createGain();
-          oscillator.frequency.value = index === 1 ? 880 : 660;
-          gain.gain.setValueAtTime(0.0001, context.currentTime + delay);
-          gain.gain.exponentialRampToValueAtTime(0.2, context.currentTime + delay + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + delay + 0.16);
-          oscillator.connect(gain).connect(context.destination);
-          oscillator.start(context.currentTime + delay);
-          oscillator.stop(context.currentTime + delay + 0.18);
+        context.resume().catch(() => {});
+        // Three clear two-tone chimes, with a sustained body instead of a tiny blip.
+        [0, 0.42, 1.1, 1.52, 2.2, 2.62].forEach((delay, index) => {
+          const start = context.currentTime + delay;
+          const frequency = index % 2 ? 1174 : 880;
+          [[1, 0.7, "triangle"], [2, 0.12, "sine"]].forEach(([harmonic, volume, type]) => {
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            oscillator.type = type;
+            oscillator.frequency.value = frequency * harmonic;
+            gain.gain.setValueAtTime(0.0001, start);
+            gain.gain.exponentialRampToValueAtTime(volume, start + 0.015);
+            gain.gain.setValueAtTime(volume, start + 0.25);
+            gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.36);
+            oscillator.connect(gain).connect(context.destination);
+            alertSounds.current.push(oscillator);
+            oscillator.onended = () => {
+              oscillator.disconnect(); gain.disconnect();
+              alertSounds.current = alertSounds.current.filter((node) => node !== oscillator);
+            };
+            oscillator.start(start);
+            oscillator.stop(start + 0.38);
+          });
         });
       } catch {
         // Audio is optional and may be blocked until the next user gesture.
@@ -289,6 +303,17 @@ function App() {
       new Notification("하차벨 알림", { body: `${destination?.name || "목적지"}에 가까워졌어요.` });
     }
   }, [destination, soundEnabled, demoMode, alertDestination, remainingDistance]);
+
+  useEffect(() => {
+    if (soundEnabled && tracking) return;
+    alertSounds.current.forEach((node) => { try { node.stop(); } catch { /* Already ended. */ } });
+    alertSounds.current = [];
+  }, [soundEnabled, tracking]);
+
+  useEffect(() => () => {
+    alertSounds.current.forEach((node) => { try { node.stop(); } catch { /* Already ended. */ } });
+    audioRef.current?.close().catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
