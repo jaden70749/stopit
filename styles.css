@@ -42,6 +42,8 @@ button { border: 0; cursor: pointer; }
 .search-input-wrap input { min-width: 0; flex: 1; color: var(--ink); outline: 0; border: 0; background: transparent; font-size: 13px; }
 .search-input-wrap input::placeholder { color: #b1b4c1; }
 .search-results { overflow: hidden; margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.search-order { margin: 10px 0 0; color: #737891; font-size: 11px; }
+.result-distance { flex-shrink: 0; color: var(--violet); font-size: 11px; white-space: nowrap; }
 .search-result { width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px; color: var(--ink); text-align: left; background: white; }
 .search-result:hover { background: #f7f7ff; }
 .result-icon { width: 28px; height: 28px; display: grid; place-items: center; color: var(--violet); border-radius: 9px; background: #f0f0ff; }

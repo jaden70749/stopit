@@ -46,7 +46,7 @@ function distanceBetween(a, b) {
 }
 
 function formatDistance(meters) {
-  if (!meters) return "거리 계산 중";
+  if (!Number.isFinite(meters)) return "거리 계산 중";
   return meters < 1000 ? `${meters}m` : `${(meters / 1000).toFixed(1)}km`;
 }
 
@@ -220,23 +220,41 @@ function App() {
 
   useEffect(() => {
     clearTimeout(searchTimer.current);
+    let cancelled = false;
     if (!query.trim() || destination?.name === query.trim()) {
       setResults([]);
       return undefined;
     }
     searchTimer.current = setTimeout(async () => {
+      const showResults = (places) => {
+        if (cancelled) return;
+        const ranked = places.map((place) => ({
+          ...place,
+          searchDistance: currentPosition ? distanceBetween(currentPosition, {
+            lat: Number(place.lat ?? place.y), lng: Number(place.lng ?? place.x)
+          }) : null
+        }));
+        if (currentPosition) ranked.sort((a, b) => a.searchDistance - b.searchDistance);
+        setResults(ranked.slice(0, 5));
+      };
+      const samples = SAMPLE_PLACES.filter((place) => place.name.includes(query.trim()) || place.address.includes(query.trim()));
       if (mapReady && window.kakao?.maps?.services) {
         const places = new window.kakao.maps.services.Places();
+        const options = currentPosition ? {
+          location: new window.kakao.maps.LatLng(currentPosition.lat, currentPosition.lng),
+          sort: window.kakao.maps.services.SortBy.DISTANCE,
+          size: 15
+        } : { size: 15 };
         places.keywordSearch(query.trim(), (data, status) => {
-          if (status === window.kakao.maps.services.Status.OK) setResults(data.slice(0, 5));
-          else setResults(SAMPLE_PLACES.filter((place) => place.name.includes(query.trim()) || place.address.includes(query.trim())));
-        });
+          if (status === window.kakao.maps.services.Status.OK) showResults(data);
+          else showResults(samples);
+        }, options);
       } else {
-        setResults(SAMPLE_PLACES.filter((place) => place.name.includes(query.trim()) || place.address.includes(query.trim())).slice(0, 5));
+        showResults(samples);
       }
     }, 320);
-    return () => clearTimeout(searchTimer.current);
-  }, [query, mapReady, destination]);
+    return () => { cancelled = true; clearTimeout(searchTimer.current); };
+  }, [query, mapReady, destination, currentPosition]);
 
   useEffect(() => {
     if (!tracking) {
@@ -282,7 +300,7 @@ function App() {
           <div className="search-card">
             <label for="destination-search">목적지 설정</label>
             <div className="search-input-wrap"><${Icon} name="search" size=${18} /><input id="destination-search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="장소, 정류장, 역 검색" autocomplete="off" /></div>
-            ${results.length > 0 && html`<div className="search-results">${results.map((place) => html`<button className="search-result" key=${place.id || place.place_url} onClick=${() => chooseDestination(place)}><span className="result-icon"><${Icon} name="pin" size=${16} /></span><span><strong>${place.name || place.place_name}</strong><small>${place.address || place.road_address_name || "주소 정보 없음"}</small></span><${Icon} name="chevron" size=${16} /></button>`)}</div>`}
+            ${results.length > 0 && html`<p className="search-order">${currentPosition ? "현재 위치에서 가까운 순 · 직선거리" : "현재 위치를 허용하면 가까운 순으로 표시해요"}</p><div className="search-results">${results.map((place) => html`<button className="search-result" key=${place.id || place.place_url} onClick=${() => chooseDestination(place)}><span className="result-icon"><${Icon} name="pin" size=${16} /></span><span><strong>${place.name || place.place_name}</strong><small>${place.address || place.road_address_name || place.address_name || "주소 정보 없음"}</small></span>${place.searchDistance !== null && html`<span className="result-distance">${formatDistance(place.searchDistance)}</span>`}<${Icon} name="chevron" size=${16} /></button>`)}</div>`}
             ${destination && html`<div className="selected-place"><span className="selected-pin"><${Icon} name="check" size=${16} /></span><span><small>선택한 목적지</small><strong>${destination.name}</strong></span><button className=${`favorite-button ${isFavorite ? "active" : ""}`} onClick=${toggleFavorite} title="즐겨찾기"><${Icon} name="star" size=${18} /></button></div>`}
             <button className="location-button" onClick=${locate}><${Icon} name="compass" size=${17} />${currentPosition ? "현재 위치 다시 확인" : "현재 위치 가져오기"}</button>
           </div>
