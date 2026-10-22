@@ -219,7 +219,7 @@ function App() {
     replayActive.current = true;
     const started = performance.now();
     const timer = setInterval(() => {
-      const progress = Math.min(1, (performance.now() - started) / 45000);
+      const progress = Math.min(1, (performance.now() - started) / 30000);
       const position = replayPosition(replay, progress);
       setCurrentPosition(position);
       positionRef.current = position;
