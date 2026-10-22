@@ -1,16 +1,32 @@
-// Fixed, explicitly simulated route. No timetable or real bus service is claimed.
-export const DEMO_START = { lat: 37.39477, lng: 127.11119 };
-export const DEMO_DESTINATION = { id: 'demo-stop', name: '시연 도착 정류장', address: '발표용 가상 정류장 · 실제 운행 정보 아님', lat: 37.4135, lng: 127.1245 };
-export const DEMO_POINTS = [[127.11119, 37.39477], [127.115, 37.399], [127.12, 37.404], [127.1245, 37.4135]];
-export function demoPosition(progress) {
-  const p = Math.max(0, Math.min(1, progress)) * (DEMO_POINTS.length - 1);
-  const i = Math.min(Math.floor(p), DEMO_POINTS.length - 2);
-  const t = p - i;
-  const a = DEMO_POINTS[i], b = DEMO_POINTS[i + 1];
-  return { lng: a[0] + (b[0] - a[0]) * t, lat: a[1] + (b[1] - a[1]) * t };
+// Replay only coordinates from the selected real transit route.
+function meters(a, b) {
+  const rad = Math.PI / 180;
+  const v = Math.sin((b.lat - a.lat) * rad / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin((b.lng - a.lng) * rad / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(v), Math.sqrt(1 - v));
 }
-export const DEMO_ROUTE = {
-  properties: { type: 'BUS', totalTime: 600, transfers: 0, totalDistance: 2400 },
-  steps: [{ properties: { type: 'BUS', guidance: '시연 버스 99 · 가상 노선', time: 600, distance: 2400,
-    vehicles: [{ name: '시연 99', type: '가상 노선' }], stops: [{ name: '시연 출발 정류장' }, { name: '시연 중간 정류장' }, { name: '시연 도착 정류장' }] }, path: { points: DEMO_POINTS } }]
-};
+export function createReplay(route) {
+  const steps = route?.steps || [];
+  let last = -1;
+  steps.forEach((s, i) => { if (['BUS', 'SUBWAY'].includes(s.properties?.type)) last = i; });
+  if (last < 0) return null;
+  const segments = [];
+  let total = 0;
+  for (const step of steps.slice(0, last + 1)) {
+    const points = (step.path?.points || []).filter(p => Array.isArray(p) && p.length >= 2 && p.every(Number.isFinite)).map(([lng, lat]) => ({ lng, lat }));
+    for (let i = 1; i < points.length; i++) {
+      const length = meters(points[i - 1], points[i]);
+      if (!length) continue;
+      segments.push({ a: points[i - 1], b: points[i], start: total, length });
+      total += length;
+    }
+  }
+  if (!segments.length) return null;
+  const stops = steps[last].properties?.stops || [];
+  return { segments, total, target: { ...segments[segments.length - 1].b, name: stops[stops.length - 1]?.name || '선택 경로 하차 지점' } };
+}
+export function replayPosition(replay, progress) {
+  const distance = Math.max(0, Math.min(1, progress)) * replay.total;
+  const s = replay.segments.find(s => distance <= s.start + s.length) || replay.segments[replay.segments.length - 1];
+  const t = Math.min(1, Math.max(0, (distance - s.start) / s.length));
+  return { lat: s.a.lat + (s.b.lat - s.a.lat) * t, lng: s.a.lng + (s.b.lng - s.a.lng) * t };
+}
