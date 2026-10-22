@@ -81,27 +81,46 @@ function Icon({ name, size = 18 }) {
 }
 
 function TransitOptions({ routes, index, onSelect, loading, error, onSearch, enabled }) {
-  const minutes = (seconds) => Math.ceil(Number(seconds || 0) / 60);
-  const selected = routes[index];
+  const [expanded, setExpanded] = useState(false);
+  const minutes = (seconds) => Number.isFinite(seconds) ? Math.ceil(seconds / 60) : null;
+  const visible = routes.map((route, i) => ({ route, i })).filter(({ i }) => expanded || i < 3 || i === index);
   return html`<div className="transit-options">
-    <button className="tracking-button" onClick=${onSearch} disabled=${!enabled || loading}>${loading ? "대중교통 경로 조회 중…" : routes.length ? "경로 다시 조회" : "대중교통 경로 조회"}</button>
+    <div className="route-toolbar"><span>${routes.length ? `대중교통 ${routes.length}개 · 빠른 순` : "현재 위치에서 출발"}</span><button onClick=${onSearch} disabled=${!enabled || loading}>${loading ? "경로 찾는 중…" : routes.length ? "다시 조회" : "대중교통 경로 찾기"}</button></div>
     <p role="status" className="search-order">${loading ? "버스와 지하철 경로를 찾고 있어요." : error}</p>
-    <div className="route-list">${routes.map((route, i) => {
+    <div className="route-list">${visible.map(({ route, i }) => {
       const p = route.properties || {};
-      const fare = p.fare?.value ?? p.fare?.min;
-      return html`<button key=${i} className=${`route-card ${i === index ? "recommended" : ""}`} aria-pressed=${i === index} onClick=${() => onSelect(i)}>
-        <span className="route-icon violet"><${Icon} name=${p.type === "BUS" ? "bus" : "train"} /></span>
-        <span className="route-main"><span className="route-topline"><strong>${p.type === "BUS" ? "버스" : p.type === "SUBWAY" ? "지하철" : "버스 + 지하철"}</strong>${i === index && html`<em>선택</em>`}</span><span className="route-vehicles">환승 ${p.transfers ?? 0}회 · ${fare != null ? `${Number(fare).toLocaleString()}원${p.fare?.max > fare ? "부터" : ""}` : "요금 정보 없음"} · ${formatDistance(p.totalDistance)}</span></span>
-        <span className="route-time"><strong>${minutes(p.totalTime)}<small>분</small></strong></span></button>`;
+      const legs = (route.steps || []).filter((s) => ["BUS", "SUBWAY"].includes(s.properties?.type));
+      const walking = (route.steps || []).filter((s) => s.properties?.type === "WALKING");
+      const walkTime = walking.reduce((sum, s) => sum + (s.properties.time || 0), 0);
+      const fare = p.fare?.value != null ? `${p.fare.value.toLocaleString()}원`
+        : p.fare?.min != null ? `${p.fare.min.toLocaleString()}${p.fare.max > p.fare.min ? `~${p.fare.max.toLocaleString()}` : ""}원` : "요금 정보 없음";
+      const first = legs[0]?.properties?.stops?.[0]?.name;
+      const lastStops = legs[legs.length - 1]?.properties?.stops || [];
+      const last = lastStops[lastStops.length - 1]?.name;
+      return html`<article key=${i} className=${`journey-option ${i === index ? "selected" : ""}`}>
+        <button className="journey-select" aria-expanded=${i === index} aria-controls=${`route-detail-${i}`} onClick=${() => onSelect(i)}>
+          <span className="journey-card-heading"><span className="route-time"><strong>${minutes(p.totalTime) ?? "—"}<small>분</small></strong></span><span className="route-badges">${i === 0 && html`<em>최단시간</em>`}${i === index && html`<em>선택한 경로</em>`}</span></span>
+          <span className="journey-meta">환승 ${p.transfers ?? 0}회 · ${fare}${walking.length ? ` · 도보 ${minutes(walkTime)}분` : ""}</span>
+          <span className="line-chain">${legs.map((step, j) => html`<${React.Fragment} key=${j}>${j > 0 && html`<span className="chain-arrow">→</span>`}<span className=${`line-chip ${step.properties.type === "BUS" ? "bus-line" : "subway-line"}`}><${Icon} name=${step.properties.type === "BUS" ? "bus" : "train"} size=${15} />${(step.properties.vehicles || []).map((v) => v.name).join(" / ") || (step.properties.type === "BUS" ? "버스" : "지하철")}</span></${React.Fragment}>`)}</span>
+          <span className="boarding-summary">${first ? `${first} 승차` : "승차 위치 정보 없음"}<span>→</span>${last ? `${last} 하차` : "하차 위치 정보 없음"}</span>
+          <span className="journey-detail-hint">${i === index ? "아래에서 승하차 순서를 확인하세요" : "눌러서 상세 경로와 지도 보기"}<${Icon} name="chevron" size=${14} /></span>
+        </button>
+        ${i === index && html`<div id=${`route-detail-${i}`} className="journey-detail"><h3>이렇게 이동하세요</h3><ol className="transit-steps">${(route.steps || []).map((step, j) => {
+          const s = step.properties || {};
+          const stops = s.stops || [];
+          const walk = s.type === "WALKING";
+          return html`<li key=${j} className=${walk ? "walking" : ""}>
+            <strong>${walk ? "도보 이동" : `${s.type === "BUS" ? "버스" : "지하철"} ${(s.vehicles || []).map((v) => v.name).join(" / ")}`}</strong>
+            ${walk ? html`<span>${s.guidance || "다음 승차 위치까지 이동"}</span>` : html`<span className="step-station"><b>승차</b> ${stops[0]?.name || "정보 없음"}</span><span className="step-station"><b>하차</b> ${stops[stops.length - 1]?.name || "정보 없음"}</span>`}
+            <small>${minutes(s.time) !== null ? `${minutes(s.time)}분` : "시간 정보 없음"}${Number.isFinite(s.distance) ? ` · ${formatDistance(s.distance)}` : ""}${!walk && stops.length > 1 ? ` · ${stops.length - 1}개 정류장 이동` : ""}</small>
+            ${!walk && stops.length > 2 && html`<details className="intermediate-stops"><summary>지나는 정류장 ${stops.length}개 보기</summary><ol>${stops.map((stop) => html`<li>${stop.name}</li>`)}</ol></details>`}
+          </li>`;
+        })}</ol>${!walking.length && html`<p className="search-order">이 경로 응답에는 도보 구간이 포함되어 있지 않아요. 승차 전 정류장 위치를 확인해 주세요.</p>`}</div>`}
+      </article>`;
     })}</div>
-    ${selected && html`<ol className="transit-steps">${(selected.steps || []).map((step, i) => {
-      const p = step.properties || {};
-      const stops = p.stops || [];
-      return html`<li key=${i} className=${p.type === "WALKING" ? "walking" : ""}><strong>${p.guidance || (p.type === "WALKING" ? "도보 이동" : "대중교통 이동")}</strong><small>${(p.vehicles || []).map((v) => v.name).join(" · ")}${stops.length ? ` · ${stops[0].name} → ${stops[stops.length - 1].name}` : ""}</small><small>${minutes(p.time)}분 · ${formatDistance(p.distance)}</small></li>`;
-    })}</ol>`}
+    ${routes.length > 3 && html`<button className="more-routes" onClick=${() => setExpanded(!expanded)}>${expanded ? "주요 경로만 보기" : `다른 경로 ${routes.length - 3}개 더 보기`}</button>`}
   </div>`;
 }
-
 function App() {
   const mapElement = useRef(null);
   const mapRef = useRef(null);
@@ -204,7 +223,7 @@ function App() {
       if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("조회 서버에 연결할 수 없어요. 아래 카카오맵 길찾기를 이용해 주세요.");
       const data = await response.json();
       if (controller.signal.aborted) return;
-      setTransitRoutes(data.routes || []);
+      setTransitRoutes([...(data.routes || [])].sort((a, b) => (a.properties?.totalTime ?? Infinity) - (b.properties?.totalTime ?? Infinity)));
       setRouteIndex(0);
       if (!data.routes?.length) setRouteError(data.message || "이 구간의 대중교통 경로를 찾지 못했어요.");
     } catch (error) {
