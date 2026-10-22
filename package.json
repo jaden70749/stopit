@@ -6,7 +6,8 @@
   "engines": { "node": "22.x" },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node --check app.js",
+    "check": "node --check app.js && node --check demo.js",
+    "check:demo": "node scripts/check-demo.mjs",
     "serve": "node scripts/server.mjs",
     "dev": "npm run build && node scripts/server.mjs"
   }

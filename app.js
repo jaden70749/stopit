@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import htm from "https://esm.sh/htm@3.1.1";
+import { DEMO_START, DEMO_DESTINATION, DEMO_ROUTE, demoPosition } from "./demo.js";
 
 const html = htm.bind(React.createElement);
 const config = window.HACHABELL_CONFIG || {};
@@ -128,6 +129,7 @@ function App() {
   const positionRef = useRef(null);
   const routeLines = useRef([]);
   const routeRequest = useRef(null);
+  const audioRef = useRef(null);
   const watchRef = useRef(null);
   const searchTimer = useRef(null);
   const [activeTab, setActiveTab] = useState("route");
@@ -148,6 +150,11 @@ function App() {
   const [routeIndex, setRouteIndex] = useState(0);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState("");
+  const [demoMode, setDemoMode] = useState(() => new URLSearchParams(window.location.search).get("demo") === "1");
+  const demoModeRef = useRef(demoMode);
+  demoModeRef.current = demoMode;
+  const [demoRunning, setDemoRunning] = useState(false);
+  const [demoProgress, setDemoProgress] = useState(0);
   const selectedRoute = transitRoutes[routeIndex];
 
   const remainingDistance = destination && currentPosition ? distanceBetween(currentPosition, destination) : NaN;
@@ -161,6 +168,7 @@ function App() {
   }, []);
 
   const chooseDestination = useCallback((place) => {
+    if (demoModeRef.current) return;
     const normalized = {
       id: place.id || place.place_url || `${place.lat}-${place.lng}`,
       name: place.name || place.place_name,
@@ -177,6 +185,7 @@ function App() {
   }, []);
 
   const locate = useCallback(() => {
+    if (demoModeRef.current) return;
     if (!navigator.geolocation) {
       setLocationStatus("이 브라우저에서는 위치 기능을 사용할 수 없어요.");
       return;
@@ -184,31 +193,98 @@ function App() {
     setLocationStatus("현재 위치를 확인하고 있어요...");
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        if (demoModeRef.current) return;
         const next = { lat: position.coords.latitude, lng: position.coords.longitude };
         positionRef.current = next;
         setCurrentPosition(next);
         setLocationStatus(`현재 위치 확인 완료 · 정확도 약 ${Math.round(position.coords.accuracy)}m`);
         if (mapRef.current && window.kakao?.maps) mapRef.current.setCenter(new window.kakao.maps.LatLng(next.lat, next.lng));
       },
-      (error) => setLocationStatus(error.code === 1
+      (error) => !demoModeRef.current && setLocationStatus(error.code === 1
         ? "위치 권한이 꺼져 있어요. 브라우저에서 위치를 허용한 뒤 다시 확인해 주세요."
         : "현재 위치를 가져오지 못했어요. 위치를 다시 확인해 주세요."),
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
     );
   }, []);
 
-  useEffect(() => { locate(); }, [locate]);
+  useEffect(() => {
+    setTracking(false);
+    setDemoRunning(false);
+    setAlerted(false);
+    setResults([]);
+    setNotice("");
+    setDemoProgress(0);
+    if (demoMode) {
+      setDestination(DEMO_DESTINATION);
+      setQuery(DEMO_DESTINATION.name);
+      setCurrentPosition(DEMO_START);
+      positionRef.current = DEMO_START;
+      setAlertRange(400);
+      setLocationStatus("시연용 모의 위치 · 실제 GPS 아님");
+      setActiveTab("route");
+    } else {
+      setDestination(null);
+      setQuery("");
+      setCurrentPosition(null);
+      positionRef.current = null;
+      locate();
+    }
+  }, [demoMode, locate]);
+
+  useEffect(() => {
+    if (!demoMode) return;
+    setCurrentPosition(demoPosition(demoProgress));
+  }, [demoMode, demoProgress]);
+
+  useEffect(() => {
+    if (!demoMode || !demoRunning || !tracking) return;
+    const timer = setInterval(() => setDemoProgress((p) => Math.min(1, p + 0.0125)), 500);
+    return () => clearInterval(timer);
+  }, [demoMode, demoRunning, tracking]);
+
+  useEffect(() => { if (demoProgress >= 1) setDemoRunning(false); }, [demoProgress]);
+
+  const resetDemo = () => {
+    setDemoRunning(false); setTracking(false); setAlerted(false);
+    setDemoProgress(0); setCurrentPosition(DEMO_START); setNotice("");
+  };
+  const unlockAudio = () => {
+    if (!soundEnabled) return;
+    try {
+      audioRef.current ||= new (window.AudioContext || window.webkitAudioContext)();
+      audioRef.current.resume().catch(() => {});
+    } catch { /* Visual alert remains available when audio is unsupported. */ }
+  };
+  const playDemo = () => {
+    unlockAudio();
+    if (demoProgress >= 1) { setDemoProgress(0); setCurrentPosition(DEMO_START); setAlerted(false); setNotice(""); }
+    setTracking(true); setDemoRunning(true);
+  };
+  const jumpDemo = (inside) => {
+    unlockAudio();
+    setDemoRunning(false); setTracking(true); setAlerted(false); setNotice("");
+    let lo = 0, hi = 1;
+    const target = alertRange + (inside ? -20 : 20);
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (distanceBetween(demoPosition(mid), DEMO_DESTINATION) > target) lo = mid; else hi = mid;
+    }
+    const progress = (lo + hi) / 2;
+    setDemoProgress(progress);
+    setCurrentPosition(demoPosition(progress));
+  };
 
   useEffect(() => {
     routeRequest.current?.abort();
-    setTransitRoutes([]);
+    setTransitRoutes(demoMode ? [DEMO_ROUTE] : []);
     setRouteIndex(0);
     setRouteLoading(false);
     setRouteError("");
     return () => routeRequest.current?.abort();
-  }, [destination]);
+  }, [destination, demoMode]);
 
   const findTransit = async () => {
+    if (demoMode) { setTransitRoutes([DEMO_ROUTE]); setRouteIndex(0); return; }
     if (!currentPosition || !destination) return;
     routeRequest.current?.abort();
     const controller = new AbortController();
@@ -235,11 +311,12 @@ function App() {
 
   const notifyReached = useCallback(() => {
     setAlerted(true);
-    setNotice(`목적지 ${destination?.name || "근처"}에 도착했어요. 하차 준비를 해주세요.`);
+    setNotice(`${demoMode ? "[시연] " : ""}${destination?.name || "목적지"}까지 ${formatDistance(remainingDistance)} 남았어요. 하차 준비를 해주세요.`);
     if (navigator.vibrate) navigator.vibrate([250, 120, 250]);
     if (soundEnabled) {
       try {
-        const context = new (window.AudioContext || window.webkitAudioContext)();
+        const context = audioRef.current || new (window.AudioContext || window.webkitAudioContext)();
+        audioRef.current = context;
         [0, 0.22, 0.44].forEach((delay, index) => {
           const oscillator = context.createOscillator();
           const gain = context.createGain();
@@ -256,9 +333,9 @@ function App() {
       }
     }
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("하차벨 알림", { body: `${destination?.name || "목적지"}에 가까워졌어요.` });
+      new Notification(demoMode ? "하차벨 시연 알림" : "하차벨 알림", { body: `${destination?.name || "목적지"}에 가까워졌어요.` });
     }
-  }, [destination, soundEnabled]);
+  }, [destination, soundEnabled, demoMode, remainingDistance]);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,14 +375,16 @@ function App() {
     if (destination) {
       const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(destination.lat, destination.lng), map: mapRef.current, title: destination.name });
       markerRefs.current.push(marker);
-      if (currentPosition) {
+      if (currentPosition && demoMode && tracking) {
+        mapRef.current.panTo(new kakao.maps.LatLng(currentPosition.lat, currentPosition.lng));
+      } else if (currentPosition) {
         const bounds = new kakao.maps.LatLngBounds();
         bounds.extend(new kakao.maps.LatLng(currentPosition.lat, currentPosition.lng));
         bounds.extend(marker.getPosition());
         mapRef.current.setBounds(bounds, 50, 50, 50, 50);
       } else mapRef.current.panTo(marker.getPosition());
     }
-  }, [mapReady, currentPosition, destination]);
+  }, [mapReady, currentPosition, destination, demoMode, tracking]);
 
   useEffect(() => {
     routeLines.current.forEach((line) => line.setMap(null));
@@ -332,6 +411,7 @@ function App() {
   useEffect(() => {
     clearTimeout(searchTimer.current);
     let cancelled = false;
+    if (demoMode) { setResults([]); return undefined; }
     if (!query.trim() || destination?.name === query.trim()) {
       setResults([]);
       return undefined;
@@ -365,21 +445,22 @@ function App() {
       }
     }, 320);
     return () => { cancelled = true; clearTimeout(searchTimer.current); };
-  }, [query, mapReady, destination, currentPosition]);
+  }, [query, mapReady, destination, currentPosition, demoMode]);
 
   useEffect(() => {
-    if (!tracking) {
+    if (!tracking || demoMode) {
       if (watchRef.current !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchRef.current);
       watchRef.current = null;
       return undefined;
     }
     if (!navigator.geolocation) return undefined;
     watchRef.current = navigator.geolocation.watchPosition((position) => {
+      if (demoModeRef.current) return;
       setCurrentPosition({ lat: position.coords.latitude, lng: position.coords.longitude });
       setLocationStatus(`이동 중 · 정확도 약 ${Math.round(position.coords.accuracy)}m`);
     }, () => setLocationStatus("위치 업데이트가 중단됐어요."), { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 });
     return () => { if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current); };
-  }, [tracking]);
+  }, [tracking, demoMode]);
 
   useEffect(() => {
     if (tracking && destination && currentPosition && !alerted && remainingDistance <= alertRange) notifyReached();
@@ -391,6 +472,8 @@ function App() {
     saveFavorites(isFavorite ? favorites.filter((item) => item.id !== destination.id) : [...favorites, destination]);
   };
   const startTracking = async () => {
+    unlockAudio();
+    if (demoMode) { playDemo(); setActiveTab("tracking"); return; }
     if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission();
     if (!currentPosition) locate();
     setTracking(true);
@@ -403,14 +486,14 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><${Icon} name="bell" size=${19} /></span><div><strong>하차벨</strong><small>HachaBell</small></div></div>
-        <div className="topbar-meta"><span className="status-dot"></span><span>1차 버전</span><button className="icon-button" title="설정"><${Icon} name="settings" size=${18} /></button></div>
+        <div className="topbar-meta"><span className="status-dot"></span><span>${demoMode ? "시연 중 · 모의 GPS" : "실제 GPS 모드"}</span><button className="mode-switch" onClick=${() => { setTracking(false); setDemoRunning(false); setDemoMode(!demoMode); }}>${demoMode ? "실제 GPS로 돌아가기" : "발표용 시연 시작"}</button></div>
       </header>
       <main className="workspace">
         <aside className="sidebar">
           <div className="intro"><p className="eyebrow">SMART TRANSIT</p><h1>내릴 곳을<br /><em>놓치지 않게</em></h1><p>목적지를 설정하고 이동을 시작하면 가까워졌을 때 알려드려요.</p></div>
           <div className="search-card">
             <label for="destination-search">목적지 설정</label>
-            <div className="search-input-wrap"><${Icon} name="search" size=${18} /><input id="destination-search" value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="장소, 정류장, 역 검색" autocomplete="off" /></div>
+            <div className="search-input-wrap"><${Icon} name="search" size=${18} /><input id="destination-search" disabled=${demoMode} value=${query} onInput=${(event) => setQuery(event.target.value)} placeholder="장소, 정류장, 역 검색" autocomplete="off" /></div>
             ${results.length > 0 && html`<p className="search-order">${currentPosition ? "현재 위치에서 가까운 순 · 직선거리" : "현재 위치를 허용하면 가까운 순으로 표시해요"}</p><div className="search-results">${results.map((place) => html`<button className="search-result" key=${place.id || place.place_url} onClick=${() => chooseDestination(place)}><span className="result-icon"><${Icon} name="pin" size=${16} /></span><span><strong>${place.name || place.place_name}</strong><small>${place.address || place.road_address_name || place.address_name || "주소 정보 없음"}</small></span>${place.searchDistance !== null && html`<span className="result-distance">${formatDistance(place.searchDistance)}</span>`}<${Icon} name="chevron" size=${16} /></button>`)}</div>`}
             ${destination && html`<div className="selected-place"><span className="selected-pin"><${Icon} name="check" size=${16} /></span><span><small>선택한 목적지</small><strong>${destination.name}</strong></span><button className=${`favorite-button ${isFavorite ? "active" : ""}`} onClick=${toggleFavorite} title="즐겨찾기"><${Icon} name="star" size=${18} /></button></div>`}
             <button className="location-button" onClick=${locate}><${Icon} name="compass" size=${17} />${currentPosition ? "현재 위치 다시 확인" : "현재 위치 가져오기"}</button>
@@ -421,6 +504,7 @@ function App() {
           <div className="sidebar-footer"><span className="footer-line"></span><p>현재 위치에서 목적지까지<br />카카오맵 길찾기 · 거리 기반 하차 알림</p></div>
         </aside>
         <section className="content">
+          ${demoMode && html`<section className="demo-panel" aria-label="발표용 시연 제어"><div className="demo-heading"><div><span className="demo-badge">SIMULATION</span><h2>버스를 타지 않고 하차 알림 시연</h2><p>가상 노선·모의 GPS 좌표로 실제 거리 계산과 알림 로직을 실행합니다. 실제 버스 운행 정보가 아닙니다.</p></div><span className="demo-time">약 40초 재생</span></div><div className="demo-metrics"><div><small>모의 위치 → 목적지</small><strong>${formatDistance(remainingDistance)}</strong></div><div><small>알림 기준</small><strong>${alertRange}m 이내</strong></div><div><small>알림 상태</small><strong>${alerted ? "하차 알림 발생" : tracking ? demoRunning ? "이동 중" : "위치 고정" : "시연 대기"}</strong></div></div><div className="demo-controls"><button onClick=${demoRunning && tracking ? () => setDemoRunning(false) : playDemo}>${demoRunning && tracking ? "일시정지" : demoProgress >= 1 ? "다시 재생" : "이동 재생"}</button><button onClick=${() => jumpDemo(false)}>경계 밖 ${alertRange + 20}m</button><button onClick=${() => jumpDemo(true)}>경계 안 ${alertRange - 20}m</button><button onClick=${resetDemo}>처음으로</button><button onClick=${() => setActiveTab("tracking")}>알림 거리·소리 설정</button></div><label className="demo-slider">모의 이동 진행률 ${Math.round(demoProgress * 100)}%<input type="range" min="0" max="1000" value=${Math.round(demoProgress * 1000)} onInput=${(event) => { setDemoRunning(false); setDemoProgress(Number(event.target.value) / 1000); }} /></label><p className="demo-explanation">입력: 모의 GPS 좌표 → 처리: 목적지까지 거리 계산 → 조건: ${alertRange}m 이하 → 결과: 화면·소리 알림</p>${alerted && html`<div className="demo-alert" role="alert"><${Icon} name="bell" size=${26} /><div><strong>하차 준비를 해주세요!</strong><p>${formatDistance(remainingDistance)} 남음 · ${alertRange}m 이내 진입으로 알림 발생</p><small>시연 알림 · 실제 도착 안내 아님</small></div></div>`}</section>`}
           <div className="map-card"><div ref=${mapElement} className="map-canvas"></div><div className="map-fallback-grid"></div><div className="map-status"><span className=${mapReady ? "ready-dot" : "soft-dot"}></span>${mapStatus}</div><div className="map-legend"><span><i className="legend-user"></i>현재 위치</span><span><i className="legend-destination"></i>목적지</span></div><button className="map-locate" onClick=${locate} title="현재 위치로 이동"><${Icon} name="compass" size=${19} /></button></div>
           ${activeTab === "route" && html`<section className="panel route-panel"><div className="panel-heading"><div><p className="eyebrow">TRANSIT ROUTE</p><h2>${destination ? "대중교통 길찾기" : "목적지를 선택해 주세요"}</h2></div>${destination && currentPosition && html`<span className="distance-badge">직선 ${formatDistance(remainingDistance)}</span>`}</div>${destination ? html`<div className="journey-summary"><div className="journey-stop"><i className="journey-origin"></i><span><small>출발</small><strong>${currentPosition ? "현재 위치" : "위치를 확인해 주세요"}</strong><small>${locationStatus}</small></span></div><div className="journey-stop"><i className="journey-destination"></i><span><small>도착</small><strong>${destination.name}</strong><small>${destination.address}</small></span></div></div><${TransitOptions} routes=${transitRoutes} index=${routeIndex} onSelect=${setRouteIndex} loading=${routeLoading} error=${routeError} onSearch=${findTransit} enabled=${Boolean(currentPosition)} />${routeUrl ? html`<a className="transit-link" href=${routeUrl} target="_blank" rel="noopener noreferrer"><${Icon} name="bus" size=${20} /><span><strong>카카오맵에서 대중교통 경로 보기</strong><small>버스·지하철 노선, 환승, 소요시간 확인</small></span><${Icon} name="arrow" size=${18} /></a>` : html`<button className="tracking-button" onClick=${locate}>현재 위치 확인하고 길찾기</button>`}<div className="route-note"><${Icon} name="map" size=${17} /><span>경로를 선택하면 지도에 이동 구간을 표시해요. 소요시간은 조회 시점 기준이며 실시간 도착 예정 시간과 다를 수 있어요.</span></div><button className="route-alert-button" onClick=${() => setActiveTab("tracking")}><${Icon} name="bell" size=${17} />이 목적지 하차 알림 설정</button>` : html`<div className="empty-state"><div className="empty-icon"><${Icon} name="pin" size=${25} /></div><h3>어디로 가시나요?</h3><p>목적지를 검색하면 현재 위치에서 출발하는<br />대중교통 길찾기로 연결해요.</p><button onClick=${() => document.getElementById("destination-search")?.focus()}>목적지 검색하기 <${Icon} name="arrow" size=${16} /></button></div>`}</section>`}
           ${activeTab === "tracking" && html`<section className="panel tracking-panel"><div className="panel-heading"><div><p className="eyebrow">GET OFF ALERT</p><h2>하차 알림 설정</h2></div><span className=${`tracking-status ${tracking ? "on" : ""}`}><i></i>${tracking ? "알림 켜짐" : "대기 중"}</span></div><div className="tracking-destination"><span className="destination-icon"><${Icon} name="pin" size=${20} /></span><div><small>알림 목적지</small><strong>${destination?.name || "목적지를 먼저 선택해 주세요"}</strong><p>${destination?.address || "경로 찾기에서 목적지를 검색하세요."}</p></div></div><div className="alert-range"><div className="range-heading"><span>알림 거리</span><strong>${alertRange >= 1000 ? "1km" : `${alertRange}m`} 전</strong></div><div className="range-options">${ALERT_RANGES.map((range) => html`<button className=${alertRange === range ? "active" : ""} onClick=${() => setAlertRange(range)}>${range >= 1000 ? "1km" : `${range}m`}</button>`)}</div></div><div className="tracking-controls"><label className="toggle-row"><span><strong>소리 알림</strong><small>도착 시 알림음을 재생해요.</small></span><input type="checkbox" checked=${soundEnabled} onChange=${(event) => setSoundEnabled(event.target.checked)} /><i></i></label><button className=${`tracking-button ${tracking ? "stop" : ""}`} disabled=${!destination} onClick=${() => tracking ? setTracking(false) : startTracking()}><${Icon} name="bell" size=${18} />${tracking ? "하차 알림 끄기" : "하차 알림 시작"}</button></div>${!destination && html`<p className="inline-help">먼저 경로 찾기에서 목적지를 선택해 주세요.</p>`}</section>`}

@@ -22,6 +22,7 @@ await mkdir(dist, { recursive: true });
 await Promise.all([
   cp(resolve(root, "index.html"), resolve(dist, "index.html")),
   cp(resolve(root, "app.js"), resolve(dist, "app.js")),
+  cp(resolve(root, "demo.js"), resolve(dist, "demo.js")),
   cp(resolve(root, "styles.css"), resolve(dist, "styles.css"))
 ]);
 await writeFile(

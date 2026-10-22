@@ -100,6 +100,27 @@ button { border: 0; cursor: pointer; }
 .transit-link small { font-size: 11px; color: #625923; }
 .route-alert-button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 14px; margin-top: 18px; border: 1px solid #d9dbf5; border-radius: 12px; color: var(--violet); background: #f5f5ff; }
 .transit-options { margin-bottom: 20px; }
+.mode-switch { border-radius: 9px; padding: 9px 12px; color: #554cb1; background: #eeebff; font-size: 12px; font-weight: 800; }
+.demo-panel { padding: 24px; margin-bottom: 20px; border: 1px solid #b6acee; border-radius: 20px; background: linear-gradient(125deg, #f3efff, #f0f9ff); }
+.demo-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.demo-badge { display: inline-block; padding: 5px 8px; border-radius: 6px; background: #6555ca; color: white; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.demo-heading h2 { margin: 12px 0 8px; font-size: 21px; }
+.demo-heading p, .demo-explanation { color: #676880; font-size: 12px; line-height: 1.8; }
+.demo-time { white-space: nowrap; font-size: 11px; color: #6555ca; }
+.demo-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; }
+.demo-metrics > div { padding: 16px; border-radius: 12px; background: #ffffffb8; }
+.demo-metrics small { display: block; color: #78768e; font-size: 11px; }
+.demo-metrics strong { display: block; margin-top: 8px; font-size: 22px; color: #403875; }
+.demo-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.demo-controls button { padding: 11px 14px; border: 1px solid #c9c2eb; border-radius: 9px; color: #554b90; background: white; font-size: 12px; font-weight: 700; }
+.demo-controls button:first-child { color: white; background: #6555ca; }
+.demo-slider { display: grid; gap: 10px; margin: 20px 0 10px; font-size: 12px; color: #655b8f; }
+.demo-slider input { width: 100%; accent-color: #6555ca; }
+.demo-alert { display: flex; align-items: center; gap: 16px; padding: 22px; border: 2px solid #e4a352; border-radius: 14px; background: #fff6e7; color: #875015; }
+.demo-alert strong { font-size: 25px; }
+.demo-alert p { margin: 8px 0; font-size: 14px; }
+.demo-alert small { font-size: 11px; }
+@media (max-width: 600px) { .demo-panel { padding: 16px; } .demo-metrics { grid-template-columns: 1fr; } .demo-metrics strong { font-size: 20px; } .demo-heading { flex-wrap: wrap; } .topbar-meta { flex-wrap: wrap; justify-content: flex-end; } }
 .route-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; font-size: 12px; color: #737891; }
 .route-toolbar button, .more-routes { padding: 10px 14px; border: 1px solid #d9dbf5; border-radius: 10px; background: #f5f5ff; color: var(--violet); font-weight: 700; }
 .journey-option { overflow: hidden; border: 1px solid #e6e8f0; border-radius: 16px; background: white; }

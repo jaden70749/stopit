@@ -5,7 +5,7 @@ import { transit } from '../api/transit.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-const allowedFiles = new Set(['index.html', 'app.js', 'styles.css', 'config.js']);
+const allowedFiles = new Set(['index.html', 'app.js', 'demo.js', 'styles.css', 'config.js']);
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
