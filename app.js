@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "https://esm.sh/react@18.3.1";
+import React, { useCallback, useEffect, useRef, useState } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import htm from "https://esm.sh/htm@3.1.1";
 
@@ -84,7 +84,7 @@ function App() {
   const mapElement = useRef(null);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
-  const lineRef = useRef(null);
+  const positionRef = useRef(null);
   const watchRef = useRef(null);
   const searchTimer = useRef(null);
   const [activeTab, setActiveTab] = useState("route");
@@ -102,17 +102,10 @@ function App() {
   const [notice, setNotice] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  const visualOrigin = currentPosition || DEMO_ORIGIN;
-  const remainingDistance = destination ? distanceBetween(visualOrigin, destination) : 0;
-  const routes = useMemo(() => {
-    if (!destination) return [];
-    const base = Math.max(14, Math.round((remainingDistance / 1000) * 8 + 12));
-    return [
-      { type: "추천", title: "가장 빠른 경로", vehicle: "지하철 + 도보", time: base, transfers: 1, fare: 1_400, color: "violet", icon: "train" },
-      { type: "편안", title: "환승이 적은 경로", vehicle: "버스", time: base + 8, transfers: 0, fare: 1_500, color: "blue", icon: "bus" },
-      { type: "저렴", title: "도보를 줄인 경로", vehicle: "버스 + 지하철", time: base + 14, transfers: 2, fare: 1_500, color: "orange", icon: "bus" }
-    ];
-  }, [destination, remainingDistance]);
+  const remainingDistance = destination && currentPosition ? distanceBetween(currentPosition, destination) : NaN;
+  const routeUrl = destination && currentPosition
+    ? `https://map.kakao.com/link/by/traffic/${encodeURIComponent("현재 위치")},${currentPosition.lat},${currentPosition.lng}/${encodeURIComponent(destination.name)},${destination.lat},${destination.lng}`
+    : null;
 
   const saveFavorites = useCallback((next) => {
     setFavorites(next);
@@ -144,14 +137,19 @@ function App() {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const next = { lat: position.coords.latitude, lng: position.coords.longitude };
+        positionRef.current = next;
         setCurrentPosition(next);
         setLocationStatus(`현재 위치 확인 완료 · 정확도 약 ${Math.round(position.coords.accuracy)}m`);
         if (mapRef.current && window.kakao?.maps) mapRef.current.setCenter(new window.kakao.maps.LatLng(next.lat, next.lng));
       },
-      () => setLocationStatus("위치 권한을 확인하지 못했어요. 브라우저 설정에서 권한을 허용해 주세요."),
+      (error) => setLocationStatus(error.code === 1
+        ? "위치 권한이 꺼져 있어요. 브라우저에서 위치를 허용한 뒤 다시 확인해 주세요."
+        : "현재 위치를 가져오지 못했어요. 위치를 다시 확인해 주세요."),
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 }
     );
   }, []);
+
+  useEffect(() => { locate(); }, [locate]);
 
   const notifyReached = useCallback(() => {
     setAlerted(true);
@@ -185,8 +183,8 @@ function App() {
     loadKakao().then((kakao) => {
       if (cancelled || !mapElement.current) return;
       const map = new kakao.maps.Map(mapElement.current, {
-        center: new kakao.maps.LatLng(DEMO_ORIGIN.lat, DEMO_ORIGIN.lng),
-        level: 7,
+        center: new kakao.maps.LatLng((positionRef.current || DEMO_ORIGIN).lat, (positionRef.current || DEMO_ORIGIN).lng),
+        level: positionRef.current ? 4 : 7,
         draggable: true,
         scrollwheel: true
       });
@@ -203,18 +201,27 @@ function App() {
     markerRefs.current.forEach((marker) => marker.setMap(null));
     markerRefs.current = [];
     if (currentPosition) {
-      const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(currentPosition.lat, currentPosition.lng), map: mapRef.current, title: "현재 위치" });
+      const marker = new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(currentPosition.lat, currentPosition.lng),
+        map: mapRef.current,
+        content: '<div class="user-location-dot" role="img" aria-label="현재 위치"></div>',
+        zIndex: 3
+      });
       markerRefs.current.push(marker);
+      if (!destination) {
+        mapRef.current.setCenter(marker.getPosition());
+        mapRef.current.setLevel(4);
+      }
     }
     if (destination) {
       const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(destination.lat, destination.lng), map: mapRef.current, title: destination.name });
       markerRefs.current.push(marker);
-      mapRef.current.panTo(marker.getPosition());
-    }
-    if (lineRef.current) lineRef.current.setMap(null);
-    if (currentPosition && destination) {
-      lineRef.current = new kakao.maps.Polyline({ path: [new kakao.maps.LatLng(currentPosition.lat, currentPosition.lng), new kakao.maps.LatLng(destination.lat, destination.lng)], strokeWeight: 4, strokeColor: "#5a63d8", strokeOpacity: 0.75, strokeStyle: "shortdash" });
-      lineRef.current.setMap(mapRef.current);
+      if (currentPosition) {
+        const bounds = new kakao.maps.LatLngBounds();
+        bounds.extend(new kakao.maps.LatLng(currentPosition.lat, currentPosition.lng));
+        bounds.extend(marker.getPosition());
+        mapRef.current.setBounds(bounds, 50, 50, 50, 50);
+      } else mapRef.current.panTo(marker.getPosition());
     }
   }, [mapReady, currentPosition, destination]);
 
@@ -303,14 +310,15 @@ function App() {
             ${results.length > 0 && html`<p className="search-order">${currentPosition ? "현재 위치에서 가까운 순 · 직선거리" : "현재 위치를 허용하면 가까운 순으로 표시해요"}</p><div className="search-results">${results.map((place) => html`<button className="search-result" key=${place.id || place.place_url} onClick=${() => chooseDestination(place)}><span className="result-icon"><${Icon} name="pin" size=${16} /></span><span><strong>${place.name || place.place_name}</strong><small>${place.address || place.road_address_name || place.address_name || "주소 정보 없음"}</small></span>${place.searchDistance !== null && html`<span className="result-distance">${formatDistance(place.searchDistance)}</span>`}<${Icon} name="chevron" size=${16} /></button>`)}</div>`}
             ${destination && html`<div className="selected-place"><span className="selected-pin"><${Icon} name="check" size=${16} /></span><span><small>선택한 목적지</small><strong>${destination.name}</strong></span><button className=${`favorite-button ${isFavorite ? "active" : ""}`} onClick=${toggleFavorite} title="즐겨찾기"><${Icon} name="star" size=${18} /></button></div>`}
             <button className="location-button" onClick=${locate}><${Icon} name="compass" size=${17} />${currentPosition ? "현재 위치 다시 확인" : "현재 위치 가져오기"}</button>
+            <p className="search-order" role="status">${locationStatus}</p>
           </div>
           ${notice && html`<div className=${`notice ${alerted ? "alerted" : ""}`}><${Icon} name=${alerted ? "bell" : "check"} size=${17} /><span>${notice}</span></div>`}
           <nav className="side-nav"><button className=${activeTab === "route" ? "active" : ""} onClick=${() => setActiveTab("route")}><${Icon} name="map" size=${18} /><span>경로 찾기</span></button><button className=${activeTab === "tracking" ? "active" : ""} onClick=${() => setActiveTab("tracking")}><${Icon} name="bell" size=${18} /><span>하차 알림</span>${tracking && html`<i className="nav-live"></i>`}</button><button className=${activeTab === "favorites" ? "active" : ""} onClick=${() => setActiveTab("favorites")}><${Icon} name="bookmark" size=${18} /><span>즐겨찾기</span><b>${favorites.length}</b></button></nav>
-          <div className="sidebar-footer"><span className="footer-line"></span><p>카카오맵 기반 길찾기<br />실시간 버스 도착 정보는 2차 연동 예정</p></div>
+          <div className="sidebar-footer"><span className="footer-line"></span><p>현재 위치에서 목적지까지<br />카카오맵 길찾기 · 거리 기반 하차 알림</p></div>
         </aside>
         <section className="content">
           <div className="map-card"><div ref=${mapElement} className="map-canvas"></div><div className="map-fallback-grid"></div><div className="map-status"><span className=${mapReady ? "ready-dot" : "soft-dot"}></span>${mapStatus}</div><div className="map-legend"><span><i className="legend-user"></i>현재 위치</span><span><i className="legend-destination"></i>목적지</span></div><button className="map-locate" onClick=${locate} title="현재 위치로 이동"><${Icon} name="compass" size=${19} /></button></div>
-          ${activeTab === "route" && html`<section className="panel route-panel"><div className="panel-heading"><div><p className="eyebrow">ROUTE OPTIONS</p><h2>${destination ? `${destination.name}까지 추천 경로` : "목적지를 선택해 주세요"}</h2></div>${destination && html`<span className="distance-badge">${formatDistance(remainingDistance)}</span>`}</div>${destination ? html`<div className="route-list">${routes.map((route, index) => html`<button className=${`route-card ${index === 0 ? "recommended" : ""}`} key=${route.title}><span className=${`route-icon ${route.color}`}><${Icon} name=${route.icon} size=${20} /></span><span className="route-main"><span className="route-topline"><strong>${route.title}</strong>${index === 0 && html`<em>추천</em>`}</span><span className="route-vehicles">${route.vehicle} · 환승 ${route.transfers}회 · ${route.fare.toLocaleString()}원</span></span><span className="route-time"><strong>${route.time}<small>분</small></strong><${Icon} name="chevron" size=${17} /></span></button>`)}</div><div className="route-note"><${Icon} name="bus" size=${17} /><span>실시간 도착 예정 시간은 카카오 대중교통 API 연동 후 표시됩니다.</span></div>` : html`<div className="empty-state"><div className="empty-icon"><${Icon} name="pin" size=${25} /></div><h3>어디로 가시나요?</h3><p>왼쪽 검색창에서 목적지나 정류장을 검색하면<br />나에게 맞는 대중교통 경로를 보여드려요.</p><button onClick=${() => document.getElementById("destination-search")?.focus()}>목적지 검색하기 <${Icon} name="arrow" size=${16} /></button></div>`}</section>`}
+          ${activeTab === "route" && html`<section className="panel route-panel"><div className="panel-heading"><div><p className="eyebrow">TRANSIT ROUTE</p><h2>${destination ? "대중교통 길찾기" : "목적지를 선택해 주세요"}</h2></div>${destination && currentPosition && html`<span className="distance-badge">직선 ${formatDistance(remainingDistance)}</span>`}</div>${destination ? html`<div className="journey-summary"><div className="journey-stop"><i className="journey-origin"></i><span><small>출발</small><strong>${currentPosition ? "현재 위치" : "위치를 확인해 주세요"}</strong><small>${locationStatus}</small></span></div><div className="journey-stop"><i className="journey-destination"></i><span><small>도착</small><strong>${destination.name}</strong><small>${destination.address}</small></span></div></div>${routeUrl ? html`<a className="transit-link" href=${routeUrl} target="_blank" rel="noopener noreferrer"><${Icon} name="bus" size=${20} /><span><strong>카카오맵에서 대중교통 경로 보기</strong><small>버스·지하철 노선, 환승, 소요시간 확인</small></span><${Icon} name="arrow" size=${18} /></a>` : html`<button className="tracking-button" onClick=${locate}>현재 위치 확인하고 길찾기</button>`}<div className="route-note"><${Icon} name="map" size=${17} /><span>상세 경로는 카카오맵에서 열립니다. 하차벨에서는 선택한 목적지까지의 거리로 하차 알림을 설정할 수 있어요.</span></div><button className="route-alert-button" onClick=${() => setActiveTab("tracking")}><${Icon} name="bell" size=${17} />이 목적지 하차 알림 설정</button>` : html`<div className="empty-state"><div className="empty-icon"><${Icon} name="pin" size=${25} /></div><h3>어디로 가시나요?</h3><p>목적지를 검색하면 현재 위치에서 출발하는<br />대중교통 길찾기로 연결해요.</p><button onClick=${() => document.getElementById("destination-search")?.focus()}>목적지 검색하기 <${Icon} name="arrow" size=${16} /></button></div>`}</section>`}
           ${activeTab === "tracking" && html`<section className="panel tracking-panel"><div className="panel-heading"><div><p className="eyebrow">GET OFF ALERT</p><h2>하차 알림 설정</h2></div><span className=${`tracking-status ${tracking ? "on" : ""}`}><i></i>${tracking ? "알림 켜짐" : "대기 중"}</span></div><div className="tracking-destination"><span className="destination-icon"><${Icon} name="pin" size=${20} /></span><div><small>알림 목적지</small><strong>${destination?.name || "목적지를 먼저 선택해 주세요"}</strong><p>${destination?.address || "경로 찾기에서 목적지를 검색하세요."}</p></div></div><div className="alert-range"><div className="range-heading"><span>알림 거리</span><strong>${alertRange >= 1000 ? "1km" : `${alertRange}m`} 전</strong></div><div className="range-options">${ALERT_RANGES.map((range) => html`<button className=${alertRange === range ? "active" : ""} onClick=${() => setAlertRange(range)}>${range >= 1000 ? "1km" : `${range}m`}</button>`)}</div></div><div className="tracking-controls"><label className="toggle-row"><span><strong>소리 알림</strong><small>도착 시 알림음을 재생해요.</small></span><input type="checkbox" checked=${soundEnabled} onChange=${(event) => setSoundEnabled(event.target.checked)} /><i></i></label><button className=${`tracking-button ${tracking ? "stop" : ""}`} disabled=${!destination} onClick=${() => tracking ? setTracking(false) : startTracking()}><${Icon} name="bell" size=${18} />${tracking ? "하차 알림 끄기" : "하차 알림 시작"}</button></div>${!destination && html`<p className="inline-help">먼저 경로 찾기에서 목적지를 선택해 주세요.</p>`}</section>`}
           ${activeTab === "favorites" && html`<section className="panel favorites-panel"><div className="panel-heading"><div><p className="eyebrow">SAVED PLACES</p><h2>즐겨찾는 장소</h2></div><span className="distance-badge">${favorites.length}개</span></div>${favorites.length ? html`<div className="favorite-list">${favorites.map((place) => html`<button className="favorite-row" key=${place.id} onClick=${() => chooseDestination(place)}><span className="favorite-row-icon"><${Icon} name="bookmark" size=${17} /></span><span><strong>${place.name}</strong><small>${place.address}</small></span><${Icon} name="chevron" size=${17} /></button>`)}</div>` : html`<div className="empty-state compact"><div className="empty-icon"><${Icon} name="bookmark" size=${24} /></div><h3>아직 저장한 장소가 없어요</h3><p>목적지를 선택한 뒤 별표를 눌러 저장해 보세요.</p></div>`}</section>`}
         </section>
