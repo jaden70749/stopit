@@ -85,6 +85,21 @@ button { border: 0; cursor: pointer; }
 .legend-destination { background: #5b61d6; box-shadow: 0 0 0 3px #ddddff; }
 .map-locate { position: absolute; z-index: 4; right: 17px; top: 16px; width: 36px; height: 36px; display: grid; place-items: center; color: #626a88; border: 1px solid rgba(255,255,255,.8); border-radius: 10px; background: rgba(255,255,255,.88); box-shadow: 0 4px 12px rgba(20,30,60,.08); }
 .map-locate:hover { color: var(--violet); }
+.user-location-dot { width: 18px; height: 18px; border: 3px solid white; border-radius: 50%; background: #2785fa; box-shadow: 0 0 0 10px rgba(39,133,250,.16), 0 2px 8px #43628b66; }
+.journey-summary { display: grid; gap: 22px; margin: 24px 0; padding: 20px; border: 1px solid var(--line); border-radius: 14px; }
+.journey-stop { display: flex; align-items: flex-start; gap: 14px; }
+.journey-stop > i { width: 11px; height: 11px; flex-shrink: 0; margin-top: 5px; border-radius: 50%; }
+.journey-origin { background: #2785fa; }
+.journey-destination { background: var(--violet); }
+.journey-stop span { display: grid; gap: 5px; }
+.journey-stop small { color: #858a9d; font-size: 11px; line-height: 1.6; }
+.journey-stop strong { font-size: 15px; }
+.transit-link { display: flex; align-items: center; gap: 12px; padding: 18px; border-radius: 14px; color: #27241a; background: #fee500; text-decoration: none; }
+.transit-link span { flex: 1; display: grid; gap: 5px; }
+.transit-link strong { font-size: 14px; }
+.transit-link small { font-size: 11px; color: #625923; }
+.route-alert-button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 14px; margin-top: 18px; border: 1px solid #d9dbf5; border-radius: 12px; color: var(--violet); background: #f5f5ff; }
+.route-note { line-height: 1.7; }
 .panel { margin-top: 18px; padding: 24px 26px; border: 1px solid #e7e9f1; border-radius: 18px; background: rgba(255,255,255,.9); box-shadow: 0 12px 26px rgba(42,46,79,.04); }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .panel-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.05em; }
