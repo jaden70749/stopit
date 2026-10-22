@@ -1,1 +1,1 @@
-window.HACHABELL_CONFIG = Object.freeze({ kakaoJavaScriptKey: "", transitApiBaseUrl: "" });
+window.HACHABELL_CONFIG = Object.freeze({"kakaoJavaScriptKey":"","transitApiBaseUrl":""});
