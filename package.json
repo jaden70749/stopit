@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node --check app.js",
-    "serve": "python3 -m http.server 4173 -d dist"
+    "serve": "node scripts/server.mjs",
+    "dev": "npm run build && node scripts/server.mjs"
   }
 }

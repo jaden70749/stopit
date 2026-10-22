@@ -80,11 +80,35 @@ function Icon({ name, size = 18 }) {
   return html`<svg className="icon" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d=${paths[name] || paths.pin} /></svg>`;
 }
 
+function TransitOptions({ routes, index, onSelect, loading, error, onSearch, enabled }) {
+  const minutes = (seconds) => Math.ceil(Number(seconds || 0) / 60);
+  const selected = routes[index];
+  return html`<div className="transit-options">
+    <button className="tracking-button" onClick=${onSearch} disabled=${!enabled || loading}>${loading ? "대중교통 경로 조회 중…" : routes.length ? "경로 다시 조회" : "대중교통 경로 조회"}</button>
+    <p role="status" className="search-order">${loading ? "버스와 지하철 경로를 찾고 있어요." : error}</p>
+    <div className="route-list">${routes.map((route, i) => {
+      const p = route.properties || {};
+      const fare = p.fare?.value ?? p.fare?.min;
+      return html`<button key=${i} className=${`route-card ${i === index ? "recommended" : ""}`} aria-pressed=${i === index} onClick=${() => onSelect(i)}>
+        <span className="route-icon violet"><${Icon} name=${p.type === "BUS" ? "bus" : "train"} /></span>
+        <span className="route-main"><span className="route-topline"><strong>${p.type === "BUS" ? "버스" : p.type === "SUBWAY" ? "지하철" : "버스 + 지하철"}</strong>${i === index && html`<em>선택</em>`}</span><span className="route-vehicles">환승 ${p.transfers ?? 0}회 · ${fare != null ? `${Number(fare).toLocaleString()}원${p.fare?.max > fare ? "부터" : ""}` : "요금 정보 없음"} · ${formatDistance(p.totalDistance)}</span></span>
+        <span className="route-time"><strong>${minutes(p.totalTime)}<small>분</small></strong></span></button>`;
+    })}</div>
+    ${selected && html`<ol className="transit-steps">${(selected.steps || []).map((step, i) => {
+      const p = step.properties || {};
+      const stops = p.stops || [];
+      return html`<li key=${i} className=${p.type === "WALKING" ? "walking" : ""}><strong>${p.guidance || (p.type === "WALKING" ? "도보 이동" : "대중교통 이동")}</strong><small>${(p.vehicles || []).map((v) => v.name).join(" · ")}${stops.length ? ` · ${stops[0].name} → ${stops[stops.length - 1].name}` : ""}</small><small>${minutes(p.time)}분 · ${formatDistance(p.distance)}</small></li>`;
+    })}</ol>`}
+  </div>`;
+}
+
 function App() {
   const mapElement = useRef(null);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
   const positionRef = useRef(null);
+  const routeLines = useRef([]);
+  const routeRequest = useRef(null);
   const watchRef = useRef(null);
   const searchTimer = useRef(null);
   const [activeTab, setActiveTab] = useState("route");
@@ -101,6 +125,11 @@ function App() {
   const [favorites, setFavorites] = useState(readFavorites);
   const [notice, setNotice] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [transitRoutes, setTransitRoutes] = useState([]);
+  const [routeIndex, setRouteIndex] = useState(0);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState("");
+  const selectedRoute = transitRoutes[routeIndex];
 
   const remainingDistance = destination && currentPosition ? distanceBetween(currentPosition, destination) : NaN;
   const routeUrl = destination && currentPosition
@@ -150,6 +179,40 @@ function App() {
   }, []);
 
   useEffect(() => { locate(); }, [locate]);
+
+  useEffect(() => {
+    routeRequest.current?.abort();
+    setTransitRoutes([]);
+    setRouteIndex(0);
+    setRouteLoading(false);
+    setRouteError("");
+    return () => routeRequest.current?.abort();
+  }, [destination]);
+
+  const findTransit = async () => {
+    if (!currentPosition || !destination) return;
+    routeRequest.current?.abort();
+    const controller = new AbortController();
+    routeRequest.current = controller;
+    setRouteLoading(true);
+    setRouteError("");
+    setTransitRoutes([]);
+    const params = new URLSearchParams({ start_x: currentPosition.lng, start_y: currentPosition.lat, end_x: destination.lng, end_y: destination.lat });
+    try {
+      const base = (config.transitApiBaseUrl || "").replace(/\/$/, "");
+      const response = await fetch(`${base}/api/transit?${params}`, { signal: controller.signal });
+      if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("조회 서버에 연결할 수 없어요. 아래 카카오맵 길찾기를 이용해 주세요.");
+      const data = await response.json();
+      if (controller.signal.aborted) return;
+      setTransitRoutes(data.routes || []);
+      setRouteIndex(0);
+      if (!data.routes?.length) setRouteError(data.message || "이 구간의 대중교통 경로를 찾지 못했어요.");
+    } catch (error) {
+      if (!controller.signal.aborted) setRouteError(error.message);
+    } finally {
+      if (!controller.signal.aborted) setRouteLoading(false);
+    }
+  };
 
   const notifyReached = useCallback(() => {
     setAlerted(true);
@@ -224,6 +287,28 @@ function App() {
       } else mapRef.current.panTo(marker.getPosition());
     }
   }, [mapReady, currentPosition, destination]);
+
+  useEffect(() => {
+    routeLines.current.forEach((line) => line.setMap(null));
+    routeLines.current = [];
+    if (!mapReady || !mapRef.current || !selectedRoute) return;
+    const kakao = window.kakao;
+    const bounds = new kakao.maps.LatLngBounds();
+    let hasPoints = false;
+    for (const step of selectedRoute.steps || []) {
+      const path = (step.path?.points || []).filter((point) => point.length >= 2 && point.every(Number.isFinite))
+        .map(([lng, lat]) => new kakao.maps.LatLng(lat, lng));
+      if (path.length < 2) continue;
+      path.forEach((point) => { bounds.extend(point); hasPoints = true; });
+      const walking = step.properties?.type === "WALKING";
+      const line = new kakao.maps.Polyline({ map: mapRef.current, path, strokeWeight: walking ? 3 : 5,
+        strokeColor: walking ? "#8f95a6" : step.properties?.type === "BUS" ? "#2785fa" : "#6961d9",
+        strokeOpacity: 0.9, strokeStyle: walking ? "shortdash" : "solid" });
+      routeLines.current.push(line);
+    }
+    if (hasPoints) mapRef.current.setBounds(bounds, 40, 40, 40, 40);
+    return () => { routeLines.current.forEach((line) => line.setMap(null)); routeLines.current = []; };
+  }, [mapReady, selectedRoute]);
 
   useEffect(() => {
     clearTimeout(searchTimer.current);
@@ -318,7 +403,7 @@ function App() {
         </aside>
         <section className="content">
           <div className="map-card"><div ref=${mapElement} className="map-canvas"></div><div className="map-fallback-grid"></div><div className="map-status"><span className=${mapReady ? "ready-dot" : "soft-dot"}></span>${mapStatus}</div><div className="map-legend"><span><i className="legend-user"></i>현재 위치</span><span><i className="legend-destination"></i>목적지</span></div><button className="map-locate" onClick=${locate} title="현재 위치로 이동"><${Icon} name="compass" size=${19} /></button></div>
-          ${activeTab === "route" && html`<section className="panel route-panel"><div className="panel-heading"><div><p className="eyebrow">TRANSIT ROUTE</p><h2>${destination ? "대중교통 길찾기" : "목적지를 선택해 주세요"}</h2></div>${destination && currentPosition && html`<span className="distance-badge">직선 ${formatDistance(remainingDistance)}</span>`}</div>${destination ? html`<div className="journey-summary"><div className="journey-stop"><i className="journey-origin"></i><span><small>출발</small><strong>${currentPosition ? "현재 위치" : "위치를 확인해 주세요"}</strong><small>${locationStatus}</small></span></div><div className="journey-stop"><i className="journey-destination"></i><span><small>도착</small><strong>${destination.name}</strong><small>${destination.address}</small></span></div></div>${routeUrl ? html`<a className="transit-link" href=${routeUrl} target="_blank" rel="noopener noreferrer"><${Icon} name="bus" size=${20} /><span><strong>카카오맵에서 대중교통 경로 보기</strong><small>버스·지하철 노선, 환승, 소요시간 확인</small></span><${Icon} name="arrow" size=${18} /></a>` : html`<button className="tracking-button" onClick=${locate}>현재 위치 확인하고 길찾기</button>`}<div className="route-note"><${Icon} name="map" size=${17} /><span>상세 경로는 카카오맵에서 열립니다. 하차벨에서는 선택한 목적지까지의 거리로 하차 알림을 설정할 수 있어요.</span></div><button className="route-alert-button" onClick=${() => setActiveTab("tracking")}><${Icon} name="bell" size=${17} />이 목적지 하차 알림 설정</button>` : html`<div className="empty-state"><div className="empty-icon"><${Icon} name="pin" size=${25} /></div><h3>어디로 가시나요?</h3><p>목적지를 검색하면 현재 위치에서 출발하는<br />대중교통 길찾기로 연결해요.</p><button onClick=${() => document.getElementById("destination-search")?.focus()}>목적지 검색하기 <${Icon} name="arrow" size=${16} /></button></div>`}</section>`}
+          ${activeTab === "route" && html`<section className="panel route-panel"><div className="panel-heading"><div><p className="eyebrow">TRANSIT ROUTE</p><h2>${destination ? "대중교통 길찾기" : "목적지를 선택해 주세요"}</h2></div>${destination && currentPosition && html`<span className="distance-badge">직선 ${formatDistance(remainingDistance)}</span>`}</div>${destination ? html`<div className="journey-summary"><div className="journey-stop"><i className="journey-origin"></i><span><small>출발</small><strong>${currentPosition ? "현재 위치" : "위치를 확인해 주세요"}</strong><small>${locationStatus}</small></span></div><div className="journey-stop"><i className="journey-destination"></i><span><small>도착</small><strong>${destination.name}</strong><small>${destination.address}</small></span></div></div><${TransitOptions} routes=${transitRoutes} index=${routeIndex} onSelect=${setRouteIndex} loading=${routeLoading} error=${routeError} onSearch=${findTransit} enabled=${Boolean(currentPosition)} />${routeUrl ? html`<a className="transit-link" href=${routeUrl} target="_blank" rel="noopener noreferrer"><${Icon} name="bus" size=${20} /><span><strong>카카오맵에서 대중교통 경로 보기</strong><small>버스·지하철 노선, 환승, 소요시간 확인</small></span><${Icon} name="arrow" size=${18} /></a>` : html`<button className="tracking-button" onClick=${locate}>현재 위치 확인하고 길찾기</button>`}<div className="route-note"><${Icon} name="map" size=${17} /><span>경로를 선택하면 지도에 이동 구간을 표시해요. 소요시간은 조회 시점 기준이며 실시간 도착 예정 시간과 다를 수 있어요.</span></div><button className="route-alert-button" onClick=${() => setActiveTab("tracking")}><${Icon} name="bell" size=${17} />이 목적지 하차 알림 설정</button>` : html`<div className="empty-state"><div className="empty-icon"><${Icon} name="pin" size=${25} /></div><h3>어디로 가시나요?</h3><p>목적지를 검색하면 현재 위치에서 출발하는<br />대중교통 길찾기로 연결해요.</p><button onClick=${() => document.getElementById("destination-search")?.focus()}>목적지 검색하기 <${Icon} name="arrow" size=${16} /></button></div>`}</section>`}
           ${activeTab === "tracking" && html`<section className="panel tracking-panel"><div className="panel-heading"><div><p className="eyebrow">GET OFF ALERT</p><h2>하차 알림 설정</h2></div><span className=${`tracking-status ${tracking ? "on" : ""}`}><i></i>${tracking ? "알림 켜짐" : "대기 중"}</span></div><div className="tracking-destination"><span className="destination-icon"><${Icon} name="pin" size=${20} /></span><div><small>알림 목적지</small><strong>${destination?.name || "목적지를 먼저 선택해 주세요"}</strong><p>${destination?.address || "경로 찾기에서 목적지를 검색하세요."}</p></div></div><div className="alert-range"><div className="range-heading"><span>알림 거리</span><strong>${alertRange >= 1000 ? "1km" : `${alertRange}m`} 전</strong></div><div className="range-options">${ALERT_RANGES.map((range) => html`<button className=${alertRange === range ? "active" : ""} onClick=${() => setAlertRange(range)}>${range >= 1000 ? "1km" : `${range}m`}</button>`)}</div></div><div className="tracking-controls"><label className="toggle-row"><span><strong>소리 알림</strong><small>도착 시 알림음을 재생해요.</small></span><input type="checkbox" checked=${soundEnabled} onChange=${(event) => setSoundEnabled(event.target.checked)} /><i></i></label><button className=${`tracking-button ${tracking ? "stop" : ""}`} disabled=${!destination} onClick=${() => tracking ? setTracking(false) : startTracking()}><${Icon} name="bell" size=${18} />${tracking ? "하차 알림 끄기" : "하차 알림 시작"}</button></div>${!destination && html`<p className="inline-help">먼저 경로 찾기에서 목적지를 선택해 주세요.</p>`}</section>`}
           ${activeTab === "favorites" && html`<section className="panel favorites-panel"><div className="panel-heading"><div><p className="eyebrow">SAVED PLACES</p><h2>즐겨찾는 장소</h2></div><span className="distance-badge">${favorites.length}개</span></div>${favorites.length ? html`<div className="favorite-list">${favorites.map((place) => html`<button className="favorite-row" key=${place.id} onClick=${() => chooseDestination(place)}><span className="favorite-row-icon"><${Icon} name="bookmark" size=${17} /></span><span><strong>${place.name}</strong><small>${place.address}</small></span><${Icon} name="chevron" size=${17} /></button>`)}</div>` : html`<div className="empty-state compact"><div className="empty-icon"><${Icon} name="bookmark" size=${24} /></div><h3>아직 저장한 장소가 없어요</h3><p>목적지를 선택한 뒤 별표를 눌러 저장해 보세요.</p></div>`}</section>`}
         </section>
